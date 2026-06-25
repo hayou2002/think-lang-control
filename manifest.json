@@ -1,0 +1,12 @@
+{
+  "id": "thinking-language",
+  "name": "思考语言控制",
+  "version": "1.0.0",
+  "description": "强制所有模型在 reasoning_content / thinking 中使用中文进行内部推理。通过扩展机制自动注入思考语言指令，兼容 DeepSeek、GPT、Claude、Qwen 等所有推理模型。作者：求放过",
+  "author": "求放过",
+  "trust": "full-access",
+  "hidden": false,
+  "activationEvents": ["onStartup"],
+  "capabilities": [],
+  "contributes": {}
+}
