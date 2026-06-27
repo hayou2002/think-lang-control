@@ -1,19 +1,16 @@
 /**
- * 思考语言控制扩展 v2.1
+ * 思考语言控制扩展 v2.2
  *
- * v2.0 → v2.1 修复：
- * - [BUG] extractText 不读 tool_result 的 content 字段，导致工具返回的英文内容从未被检测到
- * - [BUG] isEnglishHeavy 不剥离 HTML 标签，GitHub 返回的 HTML 标签稀释英文占比
- * - [BUG] isEnglishHeavy 剥离了代码块/行内代码，但代码本身就是英文内容（变量名、关键字、注释），
- *         是语言引力的主要来源，不应剥离
- * - [增强] 指令文本更强力，明确提及 GitHub、代码文件等场景
- * - [增强] LOOKBACK 从 3 提升到 5，覆盖更长的上下文窗口
- * - [增强] 最短检测长度从 30 降到 10，小段代码也能触发检测
+ * v2.1 → v2.2 修复：
+ * - [增强] 新增"语言块检测"：即使整体英文比例被中文注释拉低，
+ *         只要存在 3 个以上英文标识符（变量名、函数名、关键字），仍触发注入
+ * - [修复] applyInstruction 数组格式剥离时，剥离后未用更新的 block 继续检查
+ * - [增强] messagesSinceInjection 兼容 role 为 "human" 等变体格式
  *
  * 设计原理：
  * - 推理发生在对话末尾，指令离末尾越近，模型越不可能忽视
  * - 英文内容形成"语言引力"，周期性注入是对抗这种引力的唯一手段
- * - 工具返回结果（web_fetch/browser）是英文内容的主要来源，必须能正确识别
+ * - 代码文件即使有大量中文注释，其中的英文标识符仍然是引力来源
  */
 
 // ─── 配置 ─────────────────────────────────────────────────
@@ -33,6 +30,12 @@ var REINFORCE_INTERVAL = 3;
 /** 英文内容检测阈值：ASCII字母占非空白字符的比例 */
 var ENGLISH_THRESHOLD = 0.5;
 
+/** 语言块检测：至少多少个英文标识符才触发 */
+var CODE_WORD_THRESHOLD = 3;
+
+/** 英文标识符最小长度（字符数） */
+var CODE_WORD_MIN_LEN = 3;
+
 /** 向前检查最近多少条消息的英文含量 */
 var LOOKBACK = 5;
 
@@ -42,6 +45,11 @@ var MIN_DETECT_LENGTH = 10;
 // ─── 工具函数 ─────────────────────────────────────────────
 
 var MARKER = "【思考语言要求】";
+
+/** 判断是否为用户角色（兼容多种格式） */
+function isUserRole(role) {
+  return role === "user" || role === "human";
+}
 
 /**
  * 从消息 content 中提取纯文本
@@ -62,10 +70,8 @@ function extractBlockText(block) {
   if (typeof block === "string") return block;
   if (!block || typeof block !== "object") return "";
 
-  // 优先读 text 字段（普通文本块）
   if (block.text) return block.text;
 
-  // 处理 tool_result 等带 content 字段的块
   if (block.content !== undefined) {
     if (typeof block.content === "string") return block.content;
     if (Array.isArray(block.content)) {
@@ -98,19 +104,33 @@ function stripInstruction(text) {
 
 /**
  * 检测文本是否主要是英文
- * 只去除 URL 和 HTML 标签（它们不是语言内容）
- * 保留代码块和行内代码——变量名、关键字、注释全是英文，是语言引力的主要来源
+ *
+ * 两级检测：
+ *   1. 整体比例：ASCII 字母占非空白字符 > 50%
+ *   2. 语言块：存在 3+ 个英文标识符（变量名、函数名、关键字），
+ *      即使中文注释把整体比例拉低也能检测到
  */
 function isEnglishHeavy(text) {
   if (!text || typeof text !== "string") return false;
   var cleaned = text
     .replace(/https?:\/\/\S+/g, "")    // URL
-    .replace(/<[^>]+>/g, "")             // HTML 标签
-    .replace(/&[a-z]+;/gi, "");          // HTML 实体
+    .replace(/<[^>]+>/g, "")            // HTML 标签
+    .replace(/&[a-z]+;/gi, "");         // HTML 实体
   var total = cleaned.replace(/\s+/g, "").length;
   if (total < MIN_DETECT_LENGTH) return false;
+
+  // ── 检测 1：整体英文比例 ──
   var letters = cleaned.match(/[a-zA-Z]/g);
-  return (letters ? letters.length : 0) / total > ENGLISH_THRESHOLD;
+  var ratio = (letters ? letters.length : 0) / total;
+  if (ratio > ENGLISH_THRESHOLD) return true;
+
+  // ── 检测 2：语言块（代码标识符）──
+  // 匹配英文标识符：以字母或下划线开头，后跟字母/数字/下划线，长度 >= 3
+  // 排除纯数字和下划线开头的内部变量
+  var identifiers = cleaned.match(/\b[a-zA-Z][a-zA-Z0-9_]{2,}\b/g);
+  if (identifiers && identifiers.length >= CODE_WORD_THRESHOLD) return true;
+
+  return false;
 }
 
 /**
@@ -134,7 +154,7 @@ function hasRecentEnglish(messages, endIdx) {
 function messagesSinceInjection(messages) {
   var count = 0;
   for (var i = messages.length - 1; i >= 0; i--) {
-    if (messages[i] && messages[i].role === "user") {
+    if (messages[i] && isUserRole(messages[i].role)) {
       if (hasInstruction(extractText(messages[i].content))) return count;
       count++;
     }
@@ -160,18 +180,31 @@ function applyInstruction(messages, idx, instruction) {
     };
   } else if (Array.isArray(msg.content)) {
     var blocks = msg.content.slice();
+    var hasOldInstruction = false;
+
+    // 先检查是否有旧指令
     for (var j = 0; j < blocks.length; j++) {
-      var block = blocks[j];
-      var blockText = extractBlockText(block);
-      if (hasInstruction(blockText)) {
-        if (typeof block === "string") {
-          blocks[j] = stripInstruction(block);
-        } else {
-          blocks[j] = { ...block, text: stripInstruction(blockText) };
-        }
+      if (hasInstruction(extractBlockText(blocks[j]))) {
+        hasOldInstruction = true;
         break;
       }
     }
+
+    // 剥离旧指令
+    if (hasOldInstruction) {
+      for (var k = 0; k < blocks.length; k++) {
+        var blockText = extractBlockText(blocks[k]);
+        if (hasInstruction(blockText)) {
+          if (typeof blocks[k] === "string") {
+            blocks[k] = stripInstruction(blocks[k]);
+          } else if (blocks[k] && blocks[k].text) {
+            blocks[k] = { ...blocks[k], text: stripInstruction(blocks[k].text) };
+          }
+        }
+      }
+    }
+
+    // 在开头插入新指令
     modified[idx] = {
       ...msg,
       content: [{ type: "text", text: instruction }].concat(blocks),
@@ -193,7 +226,7 @@ module.exports = function (f) {
     // 找到最后一条用户消息（推理的锚点）
     var lastIdx = -1;
     for (var i = messages.length - 1; i >= 0; i--) {
-      if (messages[i] && messages[i].role === "user") {
+      if (messages[i] && isUserRole(messages[i].role)) {
         lastIdx = i;
         break;
       }

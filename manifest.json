@@ -1,8 +1,8 @@
 {
   "id": "thinking-language",
   "name": "思考语言控制",
-  "version": "2.1.0",
-  "description": "强制所有模型在 reasoning_content / thinking 中使用中文。v2.1：修复 tool_result 检测 bug + HTML 标签剥离 + 强化指令。作者：求放过",
+  "version": "2.2.0",
+  "description": "强制所有模型在 reasoning_content / thinking 中使用中文。v2.2：语言块检测 + 剥离逻辑修复 + role 兼容。作者：求放过",
   "author": "求放过",
   "trust": "full-access",
   "hidden": false,
