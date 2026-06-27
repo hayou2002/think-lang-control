@@ -1,9 +1,9 @@
 {
   "id": "thinking-language",
   "name": "思考语言控制",
-  "version": "2.2.0",
-  "description": "强制所有模型在 reasoning_content / thinking 中使用中文。v2.2：语言块检测 + 剥离逻辑修复 + role 兼容。作者：求放过",
-  "author": "求放过",
+  "version": "2.7.1",
+  "description": "每条消息注入中指令+system每3条刷新+后处理翻译+尾部锚点 fix:全量指令不再挡住中指令",
+  "author": "hayou2002",
   "trust": "full-access",
   "hidden": false,
   "activationEvents": ["onStartup"],
