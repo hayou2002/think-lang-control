@@ -1,12 +1,16 @@
 {
+  "manifestVersion": 1,
   "id": "thinking-language",
   "name": "思考语言控制",
   "version": "3.3.0",
   "description": "全模型请求体语言参数注入+long-prefill+推理专属指令",
+  "minAppVersion": "0.159.0",
   "author": "hayou2002",
   "trust": "full-access",
   "hidden": false,
-  "activationEvents": ["onStartup"],
+  "activationEvents": [
+    "onStartup"
+  ],
   "capabilities": [],
   "contributes": {}
 }

@@ -432,7 +432,6 @@ module.exports = function (f) {
       messages = prependInstruction(messages, FULL_INSTRUCTION);
       messages = adaptiveShortInjection(messages);
       messages = addPrefill(messages);
-
       return { messages: messages };
     } catch (e) {
       if (typeof console !== "undefined" && console.error) console.error("[thinking-language] context error:", e);
