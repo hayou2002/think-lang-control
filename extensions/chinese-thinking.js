@@ -295,30 +295,15 @@ module.exports = function (f) {
       if (!payload.user) payload.user = "zh-CN-user";
 
       
-      // ===== 语言预填：合并到最后一条用户消息中（不渲染为独立回复） =====
-      var prefilled = false;
+                  // ===== 中文外壳：英文消息包一层中文引导 =====
       if (Array.isArray(payload.messages)) {
         for (var pm = payload.messages.length - 1; pm >= 0; pm--) {
           var pmsg = payload.messages[pm];
-          if (pmsg && pmsg.role === 'user') {
-            if (typeof pmsg.content === 'string' && pmsg.content.indexOf('让我用中文') === -1) {
-              var keywords = [];
-              var userText = pmsg.content;
-              // 提取英文关键词
-              var termKeys = Object.keys(TERM_MAP);
-              for (var tk = 0; tk < termKeys.length; tk++) {
-                if (userText.toLowerCase().indexOf(termKeys[tk]) !== -1) {
-                  keywords.push(termKeys[tk]);
-                }
-              }
-              var prefillText;
-              if (keywords.length > 0) {
-                prefillText = '好的，让我来分析这个关于' + keywords.join('、') + '的问题。';
-              } else {
-                prefillText = '好的，让我用中文来分析这个问题。';
-              }
-              payload.messages[pm] = { role: 'user', content: prefillText + '\n\n' + pmsg.content };
-              prefilled = true;
+          if (pmsg && pmsg.role === 'user' && typeof pmsg.content === 'string') {
+            var isEng = typeof isEnglishHeavy === 'function' && isEnglishHeavy(pmsg.content);
+            if (isEng && pmsg.content.indexOf('【英文内容') === -1) {
+              var shell = '【英文内容，全程用中文思考和推理】 \n ';
+              payload.messages[pm] = { role: 'user', content: shell + pmsg.content + ' \n\n 让我认真分析一下这个问题。用中文梳理思路。' };
             }
             break;
           }
