@@ -247,40 +247,6 @@ function adaptiveShortInjection(messages) {
   return changed ? modified : messages;
 }
 
-/** 从英文文本中提取术语并返回中文 */
-function extractAndTranslate(text) {
-  if (!text || typeof text !== "string") return [];
-  var lower = text.toLowerCase();
-  var found = [];
-  var keys = Object.keys(TERM_MAP);
-  for (var i = 0; i < keys.length; i++) {
-    if (lower.indexOf(keys[i]) !== -1 && found.indexOf(TERM_MAP[keys[i]]) === -1) {
-      found.push(TERM_MAP[keys[i]]);
-      if (found.length >= 5) break;
-    }
-  }
-  return found;
-}
-
-/** 动态生成 assistant prefill */
-
-// ─── 主入口 ─────────────────────────────────────────────
-
-module.exports = function (f) {
-  f.on("context", function (ctx, params) {
-    try {
-      var model = params && params.model;
-      if (!model || !Array.isArray(ctx.messages)) return;
-      var messages = ctx.messages;
-      messages = cleanAllInjections(messages);
-      messages = prependInstruction(messages, FULL_INSTRUCTION);
-      messages = adaptiveShortInjection(messages);
-      return { messages: messages };
-    } catch (e) {
-      if (typeof console !== "undefined" && console.error) console.error("[thinking-language] context error:", e);
-    }
-  });
-
   f.on("before_provider_request", function (event) {
     try {
       var payload = event && event.payload;
@@ -295,17 +261,16 @@ module.exports = function (f) {
       if (!payload.user) payload.user = "zh-CN-user";
 
       
-                  // ===== 中文外壳：英文消息包一层中文引导 =====
+      // ===== 语言预填：合并到最后一条用户消息中（不渲染为独立回复） =====
+      var prefilled = false;
       if (Array.isArray(payload.messages)) {
         for (var pm = payload.messages.length - 1; pm >= 0; pm--) {
           var pmsg = payload.messages[pm];
-          if (pmsg && pmsg.role === 'user' && typeof pmsg.content === 'string' && pmsg.content.indexOf('【英文内容') === -1) {
-            // context 钩子可能已注入中文前缀，检查英文前先剥离
-            var cleanContent = pmsg.content.replace(/^【用中文思考】\s*/, '').trim();
-            var isEng = typeof isEnglishHeavy === 'function' && isEnglishHeavy(cleanContent);
-            if (isEng) {
-              var shell = '【英文内容，全程用中文思考和推理】 \n ';
-              payload.messages[pm] = { role: 'user', content: shell + cleanContent + ' \n\n 让我认真分析一下这个问题。用中文梳理思路。' };
+          if (pmsg && pmsg.role === 'user') {
+            if (typeof pmsg.content === 'string' && pmsg.content.indexOf('让我用中文') === -1) {
+              var prefillText = '好的，让我用中文来分析这个问题。';
+              payload.messages[pm] = { role: 'user', content: prefillText + '\n\n' + pmsg.content };
+              prefilled = true;
             }
             break;
           }
@@ -316,4 +281,4 @@ return payload;
       if (typeof console !== "undefined" && console.error) console.error("[thinking-language] before_provider_request error:", e);
     }
   });
-};
+
