@@ -239,68 +239,6 @@ function cleanAllInjections(messages) {
 
 // ─── 后处理：结构化摘要（替代单词替换） ───────────────────
 
-function generateThinkingSummary(englishText) {
-  if (!englishText || typeof englishText !== "string") return "";
-  var lower = englishText.toLowerCase();
-  var signals = [];
-  if (lower.indexOf("let me") !== -1 || lower.indexOf("first") !== -1 || lower.indexOf("step ") !== -1) signals.push("正在分步分析");
-  if (lower.indexOf("the answer") !== -1 || lower.indexOf("therefore") !== -1 || lower.indexOf("so the") !== -1 || lower.indexOf("in conclusion") !== -1) signals.push("已得出结论");
-  if (lower.indexOf("i need") !== -1 || lower.indexOf("i should") !== -1 || lower.indexOf("let me check") !== -1) signals.push("正在收集信息");
-  if (lower.indexOf("bug") !== -1 || lower.indexOf("error") !== -1 || lower.indexOf("wrong") !== -1 || lower.indexOf("issue") !== -1 || lower.indexOf("fix") !== -1) signals.push("正在排查问题");
-  if (lower.indexOf("the best") !== -1 || lower.indexOf("recommend") !== -1 || lower.indexOf("better") !== -1) signals.push("正在评估方案");
-  if (lower.indexOf("based on") !== -1 || lower.indexOf("according") !== -1 || lower.indexOf("looking at") !== -1) signals.push("正在参考依据");
-  if (lower.indexOf("security") !== -1 || lower.indexOf("vulnerab") !== -1 || lower.indexOf("risk") !== -1) signals.push("正在评估安全性");
-  if (lower.indexOf("performance") !== -1 || lower.indexOf("optimi") !== -1 || lower.indexOf("fast") !== -1) signals.push("正在分析性能");
-  if (lower.indexOf("architecture") !== -1 || lower.indexOf("design") !== -1 || lower.indexOf("structure") !== -1) signals.push("正在设计架构");
-  if (lower.indexOf("compare") !== -1 || lower.indexOf("difference") !== -1 || lower.indexOf("versus") !== -1 || lower.indexOf(" vs ") !== -1) signals.push("正在对比分析");
-  if (signals.length === 0) signals.push("正在进行技术分析");
-
-  var snippet = englishText.replace(/\s+/g, " ").substring(0, 100);
-  return signals.join("，") + "。推理内容摘要：" + snippet + (englishText.length > 100 ? "..." : "");
-}
-
-function addChineseTranslation(messages) {
-  var modified = messages.slice();
-  var changed = false;
-  for (var i = 0; i < modified.length; i++) {
-    var msg = modified[i];
-    if (!msg) continue;
-
-    if (Array.isArray(msg.content)) {
-      var blocks = msg.content.slice();
-      var blockChanged = false;
-      for (var j = 0; j < blocks.length; j++) {
-        var block = blocks[j];
-        if (!block) continue;
-        var thinkingText = null;
-        if (block.type === "thinking" || block.type === "reasoning") thinkingText = block.thinking || block.text || "";
-        else if (block.type === "redacted_thinking") thinkingText = block.thinking || "";
-        if (thinkingText && typeof thinkingText === "string" && isEnglishHeavy(thinkingText)) {
-          if (thinkingText.indexOf("【中文摘要】") === -1) {
-            var newBlock = {};
-            for (var bk in block) { if (block.hasOwnProperty(bk)) newBlock[bk] = block[bk]; }
-            var key = newBlock.thinking !== undefined ? "thinking" : "text";
-            newBlock[key] = thinkingText + "\n\n【中文摘要】" + generateThinkingSummary(thinkingText);
-            blocks[j] = newBlock;
-            blockChanged = true;
-          }
-        }
-      }
-      if (blockChanged) { modified[i] = { content: blocks, role: msg.role }; changed = true; }
-    }
-
-    if (typeof msg.reasoning_content === "string" && isEnglishHeavy(msg.reasoning_content)) {
-      if (msg.reasoning_content.indexOf("【中文摘要】") === -1) {
-        var newMsg = { role: msg.role, reasoning_content: msg.reasoning_content + "\n\n【中文摘要】" + generateThinkingSummary(msg.reasoning_content) };
-        if (msg.content !== undefined) newMsg.content = msg.content;
-        modified[i] = newMsg;
-        changed = true;
-      }
-    }
-  }
-  return changed ? modified : messages;
-}
-
 // ─── 注入函数 ─────────────────────────────────────────────
 
 function prependInstruction(messages, instruction) {
@@ -428,7 +366,6 @@ module.exports = function (f) {
       if (!model || !Array.isArray(ctx.messages)) return;
       var messages = ctx.messages;
       messages = cleanAllInjections(messages);
-      messages = addChineseTranslation(messages);
       messages = prependInstruction(messages, FULL_INSTRUCTION);
       messages = adaptiveShortInjection(messages);
       messages = addPrefill(messages);
@@ -447,9 +384,7 @@ module.exports = function (f) {
       if (!payload.locale) payload.locale = "zh-CN";
       if (!payload.language) payload.language = "zh";
 
-      // ===== thinking 参数（部分模型如 DeepSeek 支持） =====
-      if (!payload.thinking) payload.thinking = { type: "enabled" };
-
+      
       // ===== user 字段（用于路由和语言偏好推断） =====
       if (!payload.user) payload.user = "zh-CN-user";
 
