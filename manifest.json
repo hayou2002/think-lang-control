@@ -1,8 +1,8 @@
-{
+﻿{
   "id": "thinking-language",
   "name": "思考语言控制",
-  "version": "2.7.2",
-  "description": "v2.7.2: 修复文件尾部锚点污染。中指令+system每3条刷新+后处理翻译+尾部锚点",
+  "version": "3.3.0",
+  "description": "全模型请求体语言参数注入+long-prefill+推理专属指令",
   "author": "hayou2002",
   "trust": "full-access",
   "hidden": false,
