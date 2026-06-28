@@ -23,9 +23,7 @@ var FULL_INSTRUCTION =
   "遇到英文技术术语时，术语本身可保留英文原样，但围绕它的分析和解释必须用中文。禁止在分析过程中切换到完整的英文句子。\n\n" +
   "用户只看得懂中文，中途切换英文或中英混杂都会导致用户无法理解。这是硬性要求，不可例外。";
 
-var SHORT_INSTRUCTION = "【用中文思考】";
-var DEFAULT_PREFILL = "好的，让我认真思考一下这个问题。先理解用户的具体需求，然后逐层分析，确保思路清晰完整。整个思考过程我会用中文来组织，遇到英文技术术语时只保留术语本身，分析部分保持中文。";
-var TAIL_ANCHOR = "🔒 【思考锚点】用中文继续推理，遇到英文内容时用中文分析，仅保留技术原语。";
+var SHORT_INSTRUCTION = "【用中文思考】你的推理过程必须全程使用中文，无论用户用什么语言提问。不要在推理过程中切换到英文。";
 var INJECT_INTERVAL = 4;
 var ENGLISH_STREAK_THRESHOLD = 2;
 var ENGLISH_THRESHOLD = 0.45;
@@ -35,46 +33,8 @@ var MIN_DETECT_LENGTH = 8;
 
 var MARKER = "【思考模式锁定】";
 var TAIL_MARKER = "【思考锚点】";
-var PREFILL_MARKER = "让我";
 
 // ─── 英中术语表（用于动态 prefill） ───────────────────
-
-var TERM_MAP = {
-  "tcp": "TCP协议", "udp": "UDP协议", "http": "HTTP协议",
-  "api": "API接口", "rest": "REST架构", "grpc": "gRPC",
-  "database": "数据库", "sql": "SQL查询", "nosql": "NoSQL",
-  "docker": "Docker容器", "kubernetes": "Kubernetes", "k8s": "K8s",
-  "git": "Git版本控制", "github": "GitHub",
-  "python": "Python编程", "javascript": "JavaScript", "typescript": "TypeScript",
-  "react": "React", "vue": "Vue", "node": "Node.js",
-  "algorithm": "算法", "data structure": "数据结构",
-  "machine learning": "机器学习", "deep learning": "深度学习",
-  "neural network": "神经网络", "transformer": "Transformer",
-  "authentication": "认证", "authorization": "授权", "encryption": "加密",
-  "cache": "缓存", "middleware": "中间件", "microservice": "微服务",
-  "cloud": "云计算", "serverless": "Serverless",
-  "linux": "Linux", "nginx": "Nginx",
-  "bug": "bug问题", "debug": "调试", "error": "错误",
-  "performance": "性能", "security": "安全", "architecture": "架构",
-  "design pattern": "设计模式", "refactoring": "重构",
-  "merge": "合并排序", "sort": "排序", "search": "搜索",
-  "stack": "栈", "queue": "队列", "tree": "树结构", "graph": "图结构",
-  "recursion": "递归", "iteration": "迭代",
-  "variable": "变量", "function": "函数", "class": "类",
-  "array": "数组", "string": "字符串", "pointer": "指针",
-  "memory": "内存", "thread": "线程", "process": "进程",
-  "network": "网络", "protocol": "协议", "socket": "套接字",
-  "deploy": "部署", "ci/cd": "CI/CD", "pipeline": "流水线",
-  "monitoring": "监控", "logging": "日志",
-  "scalability": "可扩展性", "availability": "可用性",
-  "latency": "延迟", "throughput": "吞吐量", "bandwidth": "带宽",
-  "compiler": "编译器", "runtime": "运行时",
-  "regex": "正则表达式", "json": "JSON", "xml": "XML", "yaml": "YAML",
-  "token": "token", "endpoint": "端点", "routing": "路由",
-  "dependency": "依赖", "package": "包", "module": "模块",
-  "version": "版本", "branch": "分支", "commit": "提交",
-  "repository": "仓库",
-};
 
 // ─── 工具函数 ─────────────────────────────────────────────
 
@@ -303,59 +263,6 @@ function extractAndTranslate(text) {
 }
 
 /** 动态生成 assistant prefill */
-function generatePrefill(messages) {
-  var lastUserIdx = -1;
-  for (var i = messages.length - 1; i >= 0; i--) {
-    if (messages[i] && isUserRole(messages[i].role)) { lastUserIdx = i; break; }
-  }
-  if (lastUserIdx < 0) return DEFAULT_PREFILL;
-  var text = extractText(messages[lastUserIdx].content);
-  if (!isEnglishHeavy(text)) {
-    return "好的，让我认真思考一下这个问题。先理解用户的具体需求，然后逐层分析，确保思路清晰完整。除英文技术术语保留原名外，整个过程我都用中文来思考和表达。";
-  }
-  var terms = extractAndTranslate(text);
-  if (terms.length > 0) {
-    return "好的，让我来分析这个关于" + terms.join("、") + "的问题。先梳理相关的核心概念和技术要点，理解它们之间的关系。然后逐步对比分析，把关键区别和适用场景说清楚。整个过程我用中文来组织思路，英文术语只保留原名，分析和判断都用中文。";
-  }
-  return DEFAULT_PREFILL;
-}
-
-function addPrefill(messages) {
-  var modified = messages.slice();
-  var lastIdx = modified.length - 1;
-  if (lastIdx >= 0 && modified[lastIdx] && isAssistantRole(modified[lastIdx].role)) {
-    var lastText = extractText(modified[lastIdx].content);
-    if (hasMarker(lastText, PREFILL_MARKER) || lastText === DEFAULT_PREFILL || lastText.indexOf("好的") !== -1) {
-      modified.splice(lastIdx, 1);
-    }
-  }
-  var prefill = generatePrefill(modified);
-  var finalIdx = modified.length - 1;
-  if (finalIdx >= 0) {
-    var lastRole = modified[finalIdx] && modified[finalIdx].role;
-    if (isUserRole(lastRole) || (typeof lastRole === "string" && lastRole.toLowerCase() === "system")) {
-      modified.push({ role: "assistant", content: [{ type: "text", text: prefill }] });
-    }
-  }
-  return modified;
-}
-
-function applyTailAnchor(messages) {
-  var modified = messages.slice();
-  var lastUserIdx = -1;
-  for (var i = modified.length - 1; i >= 0; i--) {
-    if (modified[i] && isUserRole(modified[i].role)) { lastUserIdx = i; break; }
-  }
-  if (lastUserIdx < 0) return messages;
-  var lastText = extractText(modified[lastUserIdx].content);
-  if (hasMarker(lastText, TAIL_MARKER)) return modified;
-  if (typeof modified[lastUserIdx].content === "string") {
-    modified[lastUserIdx] = { role: modified[lastUserIdx].role, content: modified[lastUserIdx].content + "\n\n" + TAIL_ANCHOR };
-  } else if (Array.isArray(modified[lastUserIdx].content)) {
-    modified[lastUserIdx] = { role: modified[lastUserIdx].role, content: modified[lastUserIdx].content.concat([{ type: "text", text: "\n\n" + TAIL_ANCHOR }]) };
-  }
-  return modified;
-}
 
 // ─── 主入口 ─────────────────────────────────────────────
 
@@ -368,7 +275,6 @@ module.exports = function (f) {
       messages = cleanAllInjections(messages);
       messages = prependInstruction(messages, FULL_INSTRUCTION);
       messages = adaptiveShortInjection(messages);
-      messages = addPrefill(messages);
       return { messages: messages };
     } catch (e) {
       if (typeof console !== "undefined" && console.error) console.error("[thinking-language] context error:", e);
@@ -388,7 +294,37 @@ module.exports = function (f) {
       // ===== user 字段（用于路由和语言偏好推断） =====
       if (!payload.user) payload.user = "zh-CN-user";
 
-      return payload;
+      
+      // ===== 语言预填：合并到最后一条用户消息中（不渲染为独立回复） =====
+      var prefilled = false;
+      if (Array.isArray(payload.messages)) {
+        for (var pm = payload.messages.length - 1; pm >= 0; pm--) {
+          var pmsg = payload.messages[pm];
+          if (pmsg && pmsg.role === 'user') {
+            if (typeof pmsg.content === 'string' && pmsg.content.indexOf('让我用中文') === -1) {
+              var keywords = [];
+              var userText = pmsg.content;
+              // 提取英文关键词
+              var termKeys = Object.keys(TERM_MAP);
+              for (var tk = 0; tk < termKeys.length; tk++) {
+                if (userText.toLowerCase().indexOf(termKeys[tk]) !== -1) {
+                  keywords.push(termKeys[tk]);
+                }
+              }
+              var prefillText;
+              if (keywords.length > 0) {
+                prefillText = '好的，让我来分析这个关于' + keywords.join('、') + '的问题。';
+              } else {
+                prefillText = '好的，让我用中文来分析这个问题。';
+              }
+              payload.messages[pm] = { role: 'user', content: prefillText + '\n\n' + pmsg.content };
+              prefilled = true;
+            }
+            break;
+          }
+        }
+      }
+return payload;
     } catch (e) {
       if (typeof console !== "undefined" && console.error) console.error("[thinking-language] before_provider_request error:", e);
     }
