@@ -299,11 +299,13 @@ module.exports = function (f) {
       if (Array.isArray(payload.messages)) {
         for (var pm = payload.messages.length - 1; pm >= 0; pm--) {
           var pmsg = payload.messages[pm];
-          if (pmsg && pmsg.role === 'user' && typeof pmsg.content === 'string') {
-            var isEng = typeof isEnglishHeavy === 'function' && isEnglishHeavy(pmsg.content);
-            if (isEng && pmsg.content.indexOf('【英文内容') === -1) {
+          if (pmsg && pmsg.role === 'user' && typeof pmsg.content === 'string' && pmsg.content.indexOf('【英文内容') === -1) {
+            // context 钩子可能已注入中文前缀，检查英文前先剥离
+            var cleanContent = pmsg.content.replace(/^【用中文思考】\s*/, '').trim();
+            var isEng = typeof isEnglishHeavy === 'function' && isEnglishHeavy(cleanContent);
+            if (isEng) {
               var shell = '【英文内容，全程用中文思考和推理】 \n ';
-              payload.messages[pm] = { role: 'user', content: shell + pmsg.content + ' \n\n 让我认真分析一下这个问题。用中文梳理思路。' };
+              payload.messages[pm] = { role: 'user', content: shell + cleanContent + ' \n\n 让我认真分析一下这个问题。用中文梳理思路。' };
             }
             break;
           }
