@@ -1,10 +1,13 @@
-﻿/**
- * 思考语言控制扩展 v3.1
+/**
+ * 思考语言控制扩展 v3.6
  *
- * v3.1 改进：
- *   - 动态 prefill：根据用户消息语言/关键词生成中文 prefill
- *   - 翻译兜底改为结构化摘要（放弃效果差的单词替换）
- *   - Prefill 清理同时覆盖字符串和数组格式
+ * v3.6 改进：
+ *   - 恢复 f.on("context") 钩子（v3.5 被误删）
+ *   - 新增 f.on("tool_result") 钩子：工具返回后追加中文锚点（对抗 mid-response 漂移）
+ *   - 强化 prefill：从一句话变成四阶段思考协议
+ *   - FULL_INSTRUCTION 加入自检协议：反漂移措辞
+ *   - INJECT_INTERVAL 从 4 降到 2
+ *   - System prompt 首尾双锚点
  */
 
 // ─── 配置 ─────────────────────────────────────────────────
@@ -21,10 +24,12 @@ var FULL_INSTRUCTION =
   "• 专有名称：产品名、服务名、库名、框架名\n" +
   "• 模型概念：嵌入向量、注意力机制、采样参数、分词器\n\n" +
   "遇到英文技术术语时，术语本身可保留英文原样，但围绕它的分析和解释必须用中文。禁止在分析过程中切换到完整的英文句子。\n\n" +
-  "用户只看得懂中文，中途切换英文或中英混杂都会导致用户无法理解。这是硬性要求，不可例外。";
+  "【自检协议】每当你完成一段涉及英文技术术语的分析后，必须用中文自我确认。如果在推理中途发现自己开始用英文写完整句子，必须立刻中断，用\"不对，用中文继续——\"重新开始。连续两个纯英文句子即视为违规。\n\n" +
+  "用户只看得懂中文，中途切换英文或中英混杂都会导致用户无法理解。这是硬性要求，不可例外。\n\n" +
+  "【语言确认】上述所有规则定义完毕后，再强调一次：你的 thinking / reasoning 必须全程使用中文。这是本对话不可协商的硬性约束。";
 
 var SHORT_INSTRUCTION = "【用中文思考】你的推理过程必须全程使用中文，无论用户用什么语言提问。不要在推理过程中切换到英文。";
-var INJECT_INTERVAL = 4;
+var INJECT_INTERVAL = 2;
 var ENGLISH_STREAK_THRESHOLD = 2;
 var ENGLISH_THRESHOLD = 0.45;
 var CODE_KEYWORDS = /\b(function|return|import|class|def|var|const|let|if|else|for|while|try|catch|async|await|yield|switch|case|break|continue|new|this|self|true|false|null|undefined|None|True|False|SELECT|FROM|WHERE|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER)\b/;
@@ -32,9 +37,16 @@ var LOOKBACK = 5;
 var MIN_DETECT_LENGTH = 8;
 
 var MARKER = "【思考模式锁定】";
-var TAIL_MARKER = "【思考锚点】";
+var TOOL_ANCHOR = "\n\n【继续使用中文思考和推理，不要切换到英文】";
 
-// ─── 英中术语表（用于动态 prefill） ───────────────────
+// 四阶段思考启动协议
+var PREFILL_PROTOCOL =
+  "启动中文思考模式。\n\n" +
+  "【阶段1：理解】先理解用户的核心问题和隐含需求，用中文拆解。\n" +
+  "【阶段2：推理】从底层原理出发推导，每一步用中文解释。英文技术术语保留原样，但围绕它的分析必须用中文。\n" +
+  "【阶段3：验证】检查逻辑是否有漏洞，边界条件是否覆盖。\n" +
+  "【阶段4：输出】确定最终回复的结构和重点。\n\n" +
+  "【自检】上一段是中文吗？如果不是，立刻切换回来。";
 
 // ─── 工具函数 ─────────────────────────────────────────────
 
@@ -109,7 +121,7 @@ function stripFullInstruction(text) {
   var idx = text.indexOf(MARKER);
   if (idx === -1) return text;
   var after = text.substring(idx);
-  var endMarker = "不可例外。";
+  var endMarker = "不可协商的硬性约束。";
   var endIdx = after.indexOf(endMarker);
   if (endIdx !== -1) {
     var fullEnd = endIdx + endMarker.length;
@@ -130,7 +142,6 @@ function cleanAllInjections(messages) {
     var msg = modified[i];
     if (!msg) continue;
 
-    // system 全量指令
     if (typeof msg.role === "string" && msg.role.toLowerCase() === "system") {
       var text = extractText(msg.content);
       if (hasMarker(text, MARKER)) {
@@ -153,7 +164,6 @@ function cleanAllInjections(messages) {
       }
     }
 
-    // 用户短指令
     if (isUserRole(msg.role)) {
       var utxt = extractText(msg.content);
       if (hasMarker(utxt, SHORT_INSTRUCTION)) {
@@ -173,31 +183,9 @@ function cleanAllInjections(messages) {
         }
       }
     }
-
-    // 尾部锚点
-    if (isUserRole(msg.role) || isAssistantRole(msg.role)) {
-      var atxt = extractText(msg.content);
-      if (hasMarker(atxt, TAIL_MARKER)) {
-        changed = true;
-        if (typeof msg.content === "string") {
-          modified[i] = { content: msg.content.replace(/\n*🔒\s*【思考锚点】[^\n]*/, "").trimEnd(), role: msg.role };
-        }
-      }
-    }
-
-    // assistant prefill（同时检测字符串和数组格式的 content）
-    if (isAssistantRole(msg.role)) {
-      var aptxt = extractText(msg.content);
-      if (hasMarker(aptxt, PREFILL_MARKER) || aptxt === DEFAULT_PREFILL) {
-        changed = true;
-        modified[i] = null;
-      }
-    }
   }
-  return changed ? modified.filter(function(m){ return m !== null; }) : messages;
+  return changed ? modified : messages;
 }
-
-// ─── 后处理：结构化摘要（替代单词替换） ───────────────────
 
 // ─── 注入函数 ─────────────────────────────────────────────
 
@@ -225,7 +213,6 @@ function prependInstruction(messages, instruction) {
 
 function adaptiveShortInjection(messages) {
   var modified = messages.slice();
-  var changed = false;
   var userCount = countUserMessages(messages);
   var lastUserIdx = -1;
   for (var i = messages.length - 1; i >= 0; i--) {
@@ -239,46 +226,75 @@ function adaptiveShortInjection(messages) {
   var msg = messages[lastUserIdx];
   if (typeof msg.content === "string") {
     modified[lastUserIdx] = { role: msg.role, content: SHORT_INSTRUCTION + " " + msg.content };
-    changed = true;
   } else if (Array.isArray(msg.content)) {
     modified[lastUserIdx] = { role: msg.role, content: [{ type: "text", text: SHORT_INSTRUCTION }].concat(msg.content) };
-    changed = true;
   }
-  return changed ? modified : messages;
+  return modified;
 }
 
+// ─── 主入口 ─────────────────────────────────────────────
+
+module.exports = function (f) {
+
+  // ===== 上下文钩子：每次 LLM 调用前 =====
+  f.on("context", function (ctx, params) {
+    try {
+      var model = params && params.model;
+      if (!model || !Array.isArray(ctx.messages)) return;
+      var messages = ctx.messages;
+      messages = cleanAllInjections(messages);
+      messages = prependInstruction(messages, FULL_INSTRUCTION);
+      messages = adaptiveShortInjection(messages);
+      return { messages: messages };
+    } catch (e) {
+      if (typeof console !== "undefined" && console.error) console.error("[thinking-language] context error:", e);
+    }
+  });
+
+  // ===== 工具返回钩子：追加重近锚点 =====
+  f.on("tool_result", function (event) {
+    try {
+      if (!event || event.isError) return;
+      if (event.content && Array.isArray(event.content)) {
+        var c = event.content.slice();
+        var last = c[c.length - 1];
+        if (last && typeof last.type === "string" && last.type === "text") {
+          c[c.length - 1] = { type: "text", text: last.text + TOOL_ANCHOR };
+        } else {
+          c.push({ type: "text", text: TOOL_ANCHOR });
+        }
+        return { content: c };
+      }
+    } catch (e) {
+      if (typeof console !== "undefined" && console.error) console.error("[thinking-language] tool_result error:", e);
+    }
+  });
+
+  // ===== 请求体钩子 =====
   f.on("before_provider_request", function (event) {
     try {
       var payload = event && event.payload;
       if (!payload || typeof payload !== "object") return;
 
-      // ===== 请求体参数：语言提示 =====
       if (!payload.locale) payload.locale = "zh-CN";
       if (!payload.language) payload.language = "zh";
-
-      
-      // ===== user 字段（用于路由和语言偏好推断） =====
       if (!payload.user) payload.user = "zh-CN-user";
 
-      
-      // ===== 语言预填：合并到最后一条用户消息中（不渲染为独立回复） =====
-      var prefilled = false;
       if (Array.isArray(payload.messages)) {
         for (var pm = payload.messages.length - 1; pm >= 0; pm--) {
           var pmsg = payload.messages[pm];
           if (pmsg && pmsg.role === 'user') {
-            if (typeof pmsg.content === 'string' && pmsg.content.indexOf('让我用中文') === -1) {
-              var prefillText = '好的，让我用中文来分析这个问题。';
-              payload.messages[pm] = { role: 'user', content: prefillText + '\n\n' + pmsg.content };
-              prefilled = true;
+            if (typeof pmsg.content === 'string' && pmsg.content.indexOf('启动中文思考模式') === -1) {
+              payload.messages[pm] = { role: 'user', content: PREFILL_PROTOCOL + '\n\n' + pmsg.content };
             }
             break;
           }
         }
       }
-return payload;
+      return payload;
     } catch (e) {
       if (typeof console !== "undefined" && console.error) console.error("[thinking-language] before_provider_request error:", e);
     }
   });
 
+};
